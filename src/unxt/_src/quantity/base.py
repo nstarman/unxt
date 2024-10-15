@@ -236,7 +236,7 @@ class AbstractQuantity(AstropyQuantityCompatMixin, IPythonReprMixin, ArrayValue)
 
         See Also
         --------
-        unxt.uconvert : convert a quantity to a new unit.
+        `unxt.uconvert` : convert a quantity to a new unit.
 
         Examples
         --------
@@ -251,6 +251,10 @@ class AbstractQuantity(AstropyQuantityCompatMixin, IPythonReprMixin, ArrayValue)
 
     def ustrip(self, u: Any, /) -> Array:
         """Return the value in the given units.
+
+        See Also
+        --------
+        `unxt.ustrip` : strip the units from a quantity.
 
         Examples
         --------
