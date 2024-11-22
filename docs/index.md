@@ -141,6 +141,16 @@ Quantity['dimensionless'](Array([0.25, 0.4 , 0.5 ], dtype=float32), unit='')
 
 ```
 
+Arithmetic will raise an error if the units are incompatible:
+
+```{code-block} python
+
+>>> z = Quantity(5.0, u.second)
+>>> x + z
+...
+UnitConversionError: 's' (time) and 'm' (length) are not convertible
+```
+
 ### Converting Units
 
 Quantities can be converted to different units:
