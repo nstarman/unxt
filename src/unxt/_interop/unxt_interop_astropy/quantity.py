@@ -2,7 +2,7 @@
 
 __all__: list[str] = []
 
-from typing import Any, TypeAlias
+from typing import Any, NoReturn, TypeAlias
 
 import astropy.units as apyu
 from astropy.coordinates import Angle as AstropyAngle, Distance as AstropyDistance
@@ -15,6 +15,32 @@ from dataclassish import field_items, replace
 from unxt.dims import dimension_of
 from unxt.quantity import AbstractQuantity, Quantity, UncheckedQuantity, ustrip
 from unxt.units import unit, unit_of
+
+# ============================================================================
+# Value Converter
+
+
+@dispatch  # type: ignore[misc]
+def value_converter(obj: AstropyQuantity, /) -> NoReturn:
+    """Disallow conversion of `AstropyQuantity` to a value.
+
+    >>> import astropy.units as apyu
+    >>> from unxt.quantity import value_converter
+
+    >>> try:
+    ...     value_converter(apyu.Quantity(1, "m"))
+    ... except TypeError as e:
+    ...     print(e)
+    Cannot convert 'Quantity' to a value.
+    For a Quantity, use the `.from_` constructor instead.
+
+    """
+    msg = (
+        f"Cannot convert {type(obj).__name__!r} to a value. "
+        "For a Quantity, use the `.from_` constructor instead."
+    )
+    raise TypeError(msg)
+
 
 # ============================================================================
 # AbstractQuantity
