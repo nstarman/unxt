@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__all__ = ["DimensionAxis", "DimensionMismatchError"]
+__all__ = ["DimensionAxis"]
 
 import dataclasses
 from typing import Any
@@ -12,16 +12,7 @@ import jax
 from coordax import Coordinate
 from coordax.coordinate_systems import Scalar
 
-
-class DimensionMismatchError(ValueError):
-    """Raised when two fields have incompatible physical dimensions."""
-
-
-def _parse_dimension(obj: apyu.PhysicalType | str) -> apyu.PhysicalType:
-    """Coerce *obj* to an :class:`astropy.units.PhysicalType`."""
-    if isinstance(obj, apyu.PhysicalType):
-        return obj
-    return apyu.get_physical_type(obj)
+from unxt.dims import dimension
 
 
 @jax.tree_util.register_static
@@ -33,10 +24,24 @@ class DimensionAxis(Coordinate):
     :class:`astropy.units.PhysicalType` that describes the physical dimension
     of the values associated with this axis (e.g. *length*, *time*, *mass*).
 
-    The dimension information is used by the dimension-aware arithmetic helpers
-    in :mod:`unxt_coordax` (:func:`~unxt_coordax.dadd`,
-    :func:`~unxt_coordax.dmul`, etc.) to enforce dimensional consistency and
-    compute the resulting dimension after an operation.
+    The physical dimension label can be retrieved by calling
+    :func:`unxt.dimension_of` on a :class:`coordax.Field` that uses this
+    coordinate.  Note that standard arithmetic operators (``+``, ``-``,
+    ``*``, ``/``, ``**``) on :class:`coordax.Field` objects work as expected.
+
+    .. rubric:: Arithmetic limitations
+
+    Addition and subtraction are dimension-safe by construction: coordax
+    enforces that operands sharing the same axis name carry identical
+    coordinate objects, so adding two fields whose ``DimensionAxis`` instances
+    carry different physical dimensions raises a ``ValueError`` from coordax.
+
+    Multiplication, division, and powers work on the values but **do not
+    update the dimension label** on the resulting ``DimensionAxis``.  The
+    result field retains the coordinate objects of the first operand unchanged.
+    To compute the resulting dimension explicitly::
+
+        dim_result = u.dimension_of(f_a) * u.dimension_of(f_b)
 
     Fields backed by plain NumPy arrays, JAX arrays **or** :class:`unxt.Quantity`
     arrays can all be used with this coordinate type.
@@ -50,8 +55,7 @@ class DimensionAxis(Coordinate):
     dimension:
         The physical dimension of values stored along this axis.  May be given
         as an :class:`astropy.units.PhysicalType` instance or as a plain string
-        that :func:`astropy.units.get_physical_type` can parse (e.g.
-        ``"length"``, ``"time"``).
+        that :func:`unxt.dimension` can parse (e.g. ``"length"``, ``"time"``).
 
     Examples
     --------
@@ -73,10 +77,11 @@ class DimensionAxis(Coordinate):
     >>> x.shape
     (5,)
 
-    Use it to annotate a coordax field:
+    Use it to annotate a coordax field and query its dimension:
 
+    >>> import unxt as u
     >>> f = cx.field(np.ones(5), x)
-    >>> f.axes["x"].dimension
+    >>> u.dimension_of(f)
     PhysicalType('length')
     """
 
@@ -87,8 +92,8 @@ class DimensionAxis(Coordinate):
     )
 
     def __post_init__(self) -> None:
-        # Coerce string dimensions to PhysicalType
-        object.__setattr__(self, "dimension", _parse_dimension(self.dimension))
+        # Coerce string / other inputs to PhysicalType via unxt.dimension().
+        object.__setattr__(self, "dimension", dimension(self.dimension))
 
     # ------------------------------------------------------------------
     # Abstract Coordinate interface

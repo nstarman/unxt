@@ -1,15 +1,11 @@
 """unxt-coordax: interoperability between unxt and coordax."""
 
-from unxt_coordax._src.dimension_axis import DimensionAxis, DimensionMismatchError
-from unxt_coordax._src.ops import dadd, ddiv, dmul, dpow, dsub, get_dimension
+# Register unxt.AbstractQuantity with coordax.NDArray and extend
+# unxt.dimension_of for coordax types.
+from unxt_coordax._src import dispatch, register  # noqa: F401
+
+from unxt_coordax._src.dimension_axis import DimensionAxis
 
 __all__ = [
     "DimensionAxis",
-    "DimensionMismatchError",
-    "dadd",
-    "ddiv",
-    "dmul",
-    "dpow",
-    "dsub",
-    "get_dimension",
 ]

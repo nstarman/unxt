@@ -3,9 +3,9 @@
 Tests cover:
 - DimensionAxis creation and attribute access
 - Field creation with NumPy, JAX, and unxt Quantity array data
-- get_dimension helper
-- dadd / dsub with compatible dimensions (pass) and incompatible (raise)
-- dmul / ddiv / dpow dimension computation
+- unxt.dimension_of dispatches for DimensionAxis and coordax.Field
+- Standard arithmetic operators on fields (add/sub/mul/div/pow)
+- Dimension mismatch enforcement via coordax coordinate identity check
 - JAX JIT compatibility
 """
 
@@ -19,9 +19,10 @@ import coordax as cx
 import jax
 import jax.numpy as jnp
 import unxt as u
-
 import unxt_coordax as ucx
-from unxt_coordax import DimensionAxis, DimensionMismatchError
+from unxt.dims import dimension_of
+
+from unxt_coordax import DimensionAxis
 
 
 # ---------------------------------------------------------------------------
@@ -125,47 +126,58 @@ class TestFieldCreation:
 
 
 # ---------------------------------------------------------------------------
-# get_dimension
+# dimension_of dispatches
 
 
-class TestGetDimension:
-    def test_basic(self, axis_length: DimensionAxis, dim_length: apyu.PhysicalType) -> None:
+class TestDimensionOf:
+    def test_dimension_of_axis(
+        self, axis_length: DimensionAxis, dim_length: apyu.PhysicalType
+    ) -> None:
+        assert dimension_of(axis_length) == dim_length
+
+    def test_dimension_of_field(
+        self, axis_length: DimensionAxis, dim_length: apyu.PhysicalType
+    ) -> None:
         f = cx.field(np.ones(5), axis_length)
-        assert ucx.get_dimension(f) == dim_length
+        assert dimension_of(f) == dim_length
 
-    def test_by_name(self, axis_length: DimensionAxis, dim_length: apyu.PhysicalType) -> None:
-        f = cx.field(np.ones(5), axis_length)
-        assert ucx.get_dimension(f, "x") == dim_length
-
-    def test_missing_axis_name(self, axis_length: DimensionAxis) -> None:
-        f = cx.field(np.ones(5), axis_length)
-        assert ucx.get_dimension(f, "y") is None
-
-    def test_no_dimension_axis(self) -> None:
+    def test_dimension_of_field_no_dimension_axis(self) -> None:
         plain = cx.SizedAxis("x", 5)
         f = cx.field(np.ones(5), plain)
-        assert ucx.get_dimension(f) is None
+        assert dimension_of(f) is None
+
+    def test_dimension_of_via_unxt(
+        self, axis_length: DimensionAxis, dim_length: apyu.PhysicalType
+    ) -> None:
+        # Verify the dispatch is reachable via the top-level unxt.dimension_of.
+        f = cx.field(np.ones(5), axis_length)
+        assert u.dimension_of(f) == dim_length
 
 
 # ---------------------------------------------------------------------------
-# dadd / dsub
+# Standard arithmetic operators
+#
+# coordax enforces that same-named axes carry identical coordinate objects.
+# Two DimensionAxis instances with different ``dimension`` attributes are
+# unequal, so adding/subtracting fields with incompatible dimensions raises a
+# ValueError from coordax itself -- no custom check is needed.
 
 
-class TestDaddDsub:
+class TestArithmetic:
     def test_add_same_dimension_numpy(self, axis_length: DimensionAxis) -> None:
         f = cx.field(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), axis_length)
-        result = ucx.dadd(f, f)
+        result = f + f
         np.testing.assert_allclose(np.asarray(result.data), 2 * np.arange(1, 6, dtype=float))
 
     def test_add_same_dimension_jax(self, axis_length: DimensionAxis) -> None:
         f = cx.field(jnp.ones(5), axis_length)
-        result = ucx.dadd(f, f)
+        result = f + f
         np.testing.assert_allclose(np.asarray(result.data), np.full(5, 2.0))
 
     def test_add_same_dimension_quantity(self, axis_length: DimensionAxis) -> None:
         data = u.Quantity(np.ones(5), "m")
         f = cx.field(data, axis_length)
-        result = ucx.dadd(f, f)
+        result = f + f
         assert isinstance(result, cx.Field)
 
     def test_add_incompatible_dimensions_raises(
@@ -173,14 +185,16 @@ class TestDaddDsub:
         axis_length: DimensionAxis,
         axis_time: DimensionAxis,
     ) -> None:
+        # coordax enforces coordinate identity: same axis name but different
+        # DimensionAxis objects (different dimensions) → ValueError.
         f1 = cx.field(np.ones(5), axis_length)
         f2 = cx.field(np.ones(5), axis_time)
-        with pytest.raises(DimensionMismatchError, match="dimension"):
-            ucx.dadd(f1, f2)
+        with pytest.raises(ValueError, match="Coordinates"):
+            f1 + f2
 
     def test_sub_same_dimension(self, axis_length: DimensionAxis) -> None:
         f = cx.field(np.array([3.0, 6.0, 9.0, 12.0, 15.0]), axis_length)
-        result = ucx.dsub(f, f)
+        result = f - f
         np.testing.assert_allclose(np.asarray(result.data), np.zeros(5))
 
     def test_sub_incompatible_dimensions_raises(
@@ -190,173 +204,58 @@ class TestDaddDsub:
     ) -> None:
         f1 = cx.field(np.ones(5), axis_length)
         f2 = cx.field(np.ones(5), axis_time)
-        with pytest.raises(DimensionMismatchError, match="dimension"):
-            ucx.dsub(f1, f2)
+        with pytest.raises(ValueError, match="Coordinates"):
+            f1 - f2
 
-
-# ---------------------------------------------------------------------------
-# dmul
-
-
-class TestDmul:
-    def test_mul_same_dimension(
-        self, axis_length: DimensionAxis, dim_length: apyu.PhysicalType
-    ) -> None:
+    def test_mul_same_dimension(self, axis_length: DimensionAxis) -> None:
         f = cx.field(np.array([2.0, 3.0, 4.0, 5.0, 6.0]), axis_length)
-        result = ucx.dmul(f, f)
-        expected_dim = dim_length * dim_length  # area
-        assert ucx.get_dimension(result) == expected_dim
-
-    def test_mul_different_dimensions(
-        self,
-        axis_length: DimensionAxis,
-        axis_time: DimensionAxis,
-        dim_length: apyu.PhysicalType,
-        dim_time: apyu.PhysicalType,
-    ) -> None:
-        # Fields with different axis names (broadcasting): the result retains
-        # each axis with its original dimension (no dimension arithmetic on
-        # distinct axes).
-        x_len = DimensionAxis("x", 3, dim_length)
-        y_time = DimensionAxis("y", 3, dim_time)
-        f_len = cx.field(np.ones(3), x_len)
-        f_time = cx.field(np.ones(3), y_time)
-        result = ucx.dmul(f_len, f_time)
-        # Each axis retains its original dimension (no same-name axes to merge).
-        assert ucx.get_dimension(result, "x") == dim_length
-        assert ucx.get_dimension(result, "y") == dim_time
-
-    def test_mul_numpy_values(self, axis_length: DimensionAxis) -> None:
-        f = cx.field(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), axis_length)
-        result = ucx.dmul(f, f)
+        result = f * f
         np.testing.assert_allclose(
-            np.asarray(result.data),
-            np.array([1.0, 4.0, 9.0, 16.0, 25.0]),
+            np.asarray(result.data), np.array([4.0, 9.0, 16.0, 25.0, 36.0])
         )
 
-    def test_mul_jax_values(self, axis_length: DimensionAxis) -> None:
-        f = cx.field(jnp.array([2.0, 3.0, 4.0, 5.0, 6.0]), axis_length)
-        result = ucx.dmul(f, f)
-        np.testing.assert_allclose(
-            np.asarray(result.data),
-            np.array([4.0, 9.0, 16.0, 25.0, 36.0]),
-        )
+    def test_mul_preserves_coord(self, axis_length: DimensionAxis) -> None:
+        # NOTE: The DimensionAxis dimension label is NOT updated after
+        # multiplication.  The result retains the coordinate from the
+        # left-hand operand.  This is a known limitation of the coordax
+        # arithmetic model -- see the dispatch module docstring.
+        f = cx.field(np.ones(5), axis_length)
+        result = f * f
+        assert result.axes["x"] == axis_length
 
-    def test_mul_quantity_values(self, axis_length: DimensionAxis) -> None:
-        data = u.Quantity(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), "m")
-        f = cx.field(data, axis_length)
-        result = ucx.dmul(f, f)
-        assert isinstance(result, cx.Field)
-
-    def test_mul_cross_dimension_via_quantity(
-        self,
-        dim_length: apyu.PhysicalType,
-        dim_time: apyu.PhysicalType,
-    ) -> None:
-        # When both fields have different axis names, dmul uses broadcasting;
-        # axes with the same name but different dimensions would be merged to
-        # dim * dim.  Here we verify that Quantity-typed values retain the
-        # correct units through the multiplication.
-        x_len = DimensionAxis("x", 3, dim_length)
-        y_time = DimensionAxis("y", 3, dim_time)
-        f_len = cx.field(u.Quantity(np.array([1.0, 2.0, 3.0]), "m"), x_len)
-        f_time = cx.field(u.Quantity(np.array([1.0, 2.0, 3.0]), "s"), y_time)
-        result = ucx.dmul(f_len, f_time)
-        assert isinstance(result, cx.Field)
-
-
-# ---------------------------------------------------------------------------
-# ddiv
-
-
-class TestDdiv:
-    def test_div_same_dimension(self, axis_length: DimensionAxis) -> None:
-        f = cx.field(np.array([2.0, 4.0, 6.0, 8.0, 10.0]), axis_length)
-        result = ucx.ddiv(f, f)
-        dim = ucx.get_dimension(result)
-        assert dim == apyu.get_physical_type("dimensionless")
-
-    def test_div_different_dimensions(
-        self,
-        axis_length: DimensionAxis,
-        axis_time: DimensionAxis,
-        dim_length: apyu.PhysicalType,
-        dim_time: apyu.PhysicalType,
-    ) -> None:
-        # For same-axis fields, coordax requires identical coordinates.
-        # Division of a length field by itself gives dimensionless on that axis.
-        f_len = cx.field(np.array([2.0, 4.0, 6.0, 8.0, 10.0]), axis_length)
-        f_len2 = cx.field(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), axis_length)
-        result = ucx.ddiv(f_len, f_len2)
-        # dim_length / dim_length = dimensionless
-        expected_dim = dim_length / dim_length
-        assert ucx.get_dimension(result) == expected_dim
-
-    def test_div_numpy_values(self, axis_length: DimensionAxis) -> None:
+    def test_div_same_dimension_numpy(self, axis_length: DimensionAxis) -> None:
         f = cx.field(np.array([4.0, 9.0, 16.0, 25.0, 36.0]), axis_length)
         divisor = cx.field(np.array([2.0, 3.0, 4.0, 5.0, 6.0]), axis_length)
-        result = ucx.ddiv(f, divisor)
+        result = f / divisor
         np.testing.assert_allclose(
-            np.asarray(result.data),
-            np.array([2.0, 3.0, 4.0, 5.0, 6.0]),
+            np.asarray(result.data), np.array([2.0, 3.0, 4.0, 5.0, 6.0])
         )
 
-    def test_div_jax_values(self, axis_length: DimensionAxis) -> None:
+    def test_div_same_dimension_jax(self, axis_length: DimensionAxis) -> None:
         f = cx.field(jnp.array([4.0, 9.0, 16.0, 25.0, 36.0]), axis_length)
         divisor = cx.field(jnp.array([2.0, 3.0, 4.0, 5.0, 6.0]), axis_length)
-        result = ucx.ddiv(f, divisor)
+        result = f / divisor
         np.testing.assert_allclose(
-            np.asarray(result.data),
-            np.array([2.0, 3.0, 4.0, 5.0, 6.0]),
+            np.asarray(result.data), np.array([2.0, 3.0, 4.0, 5.0, 6.0])
         )
 
-
-# ---------------------------------------------------------------------------
-# dpow
-
-
-class TestDpow:
-    def test_pow_2(
-        self, axis_length: DimensionAxis, dim_length: apyu.PhysicalType
-    ) -> None:
-        f = cx.field(np.ones(5), axis_length)
-        result = ucx.dpow(f, 2)
-        assert ucx.get_dimension(result) == dim_length**2  # area
-
-    def test_pow_3(
-        self, axis_length: DimensionAxis, dim_length: apyu.PhysicalType
-    ) -> None:
-        f = cx.field(np.ones(5), axis_length)
-        result = ucx.dpow(f, 3)
-        assert ucx.get_dimension(result) == dim_length**3  # volume
-
-    def test_pow_minus_1(
-        self, axis_length: DimensionAxis, dim_length: apyu.PhysicalType
-    ) -> None:
-        f = cx.field(np.ones(5), axis_length)
-        result = ucx.dpow(f, -1)
-        assert ucx.get_dimension(result) == dim_length**-1  # wavenumber
-
-    def test_pow_numpy_values(self, axis_length: DimensionAxis) -> None:
+    def test_pow_2(self, axis_length: DimensionAxis) -> None:
         f = cx.field(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), axis_length)
-        result = ucx.dpow(f, 2)
+        result = f**2
         np.testing.assert_allclose(
-            np.asarray(result.data),
-            np.array([1.0, 4.0, 9.0, 16.0, 25.0]),
-        )
-
-    def test_pow_jax_values(self, axis_length: DimensionAxis) -> None:
-        f = cx.field(jnp.array([1.0, 2.0, 3.0, 4.0, 5.0]), axis_length)
-        result = ucx.dpow(f, 2)
-        np.testing.assert_allclose(
-            np.asarray(result.data),
-            np.array([1.0, 4.0, 9.0, 16.0, 25.0]),
+            np.asarray(result.data), np.array([1.0, 4.0, 9.0, 16.0, 25.0])
         )
 
     def test_pow_quantity_values(self, axis_length: DimensionAxis) -> None:
         data = u.Quantity(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), "m")
         f = cx.field(data, axis_length)
-        result = ucx.dpow(f, 2)
+        result = f**2
+        assert isinstance(result, cx.Field)
+
+    def test_mul_quantity_values(self, axis_length: DimensionAxis) -> None:
+        data = u.Quantity(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), "m")
+        f = cx.field(data, axis_length)
+        result = f * f
         assert isinstance(result, cx.Field)
 
 
@@ -365,25 +264,26 @@ class TestDpow:
 
 
 class TestJaxJIT:
-    def test_dadd_jit(self, axis_length: DimensionAxis) -> None:
+    def test_add_jit(self, axis_length: DimensionAxis) -> None:
         f = cx.field(jnp.ones(5), axis_length)
 
         @jax.jit
         def add_twice(x: cx.Field) -> cx.Field:
-            return ucx.dadd(x, x)
+            return x + x
 
         result = add_twice(f)
         np.testing.assert_allclose(np.asarray(result.data), np.full(5, 2.0))
 
-    def test_dmul_jit(self, axis_length: DimensionAxis) -> None:
+    def test_mul_jit(self, axis_length: DimensionAxis) -> None:
         f = cx.field(jnp.array([1.0, 2.0, 3.0, 4.0, 5.0]), axis_length)
 
         @jax.jit
         def square(x: cx.Field) -> cx.Field:
-            return ucx.dmul(x, x)
+            return x * x
 
         result = square(f)
         np.testing.assert_allclose(
             np.asarray(result.data),
             np.array([1.0, 4.0, 9.0, 16.0, 25.0]),
         )
+
