@@ -117,6 +117,21 @@ print(quantified.data)
 
 Pass a string or `AbstractUnit` directly to apply it to the DataArray's data.
 
+### Inspecting Discovered Units
+
+You can inspect unit metadata discovered by the accessor before quantifying:
+
+```python
+import xarray as xr
+import unxt_xarray
+
+da = xr.DataArray([1.0, 2.0], dims=["x"], attrs={"units": "m"})
+print(da.unxt.units)
+# {None: Unit("m")}
+```
+
+For DataArrays, the `None` key refers to the DataArray's own data.
+
 ### Coordinates with Units
 
 Coordinates can also have units:
@@ -267,7 +282,7 @@ def square(x):
 
 
 q = u.Quantity([[1.0, 2.0], [3.0, 4.0]], "m")
-da = xr.DataArray(q, dims=["time", "space"])
+da = xr.DataArray(q, dims=["x", "y"])
 
 # vmap over the data
 squared = square(da.data)
