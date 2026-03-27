@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__all__ = ["DimensionAxis"]
+__all__ = ["DimensionAxis", "DimensionOperationError"]
 
 import dataclasses
 from typing import Any
@@ -13,6 +13,28 @@ from coordax import Coordinate
 from coordax.coordinate_systems import Scalar
 
 from unxt.dims import dimension
+
+
+class DimensionOperationError(TypeError):
+    """Raised when a dimension-unsafe arithmetic operation is attempted.
+
+    Multiplication and division on :class:`coordax.Field` objects are not
+    automatically tracked when either operand carries a
+    :class:`DimensionAxis`.  Specifically:
+
+    * **Multiply / divide**: raises if the *other* operand is a
+      :class:`coordax.Field` that contains a :class:`DimensionAxis`.
+      Scaling by a plain number or a field *without* a ``DimensionAxis``
+      is allowed.
+    * **Power**: always raises when the base field contains a
+      :class:`DimensionAxis`, because the resulting physical dimension
+      cannot be recorded automatically.
+
+    To work with the resulting dimension manually, compute it explicitly::
+
+        import unxt as u
+        dim_result = u.dimension_of(f_a) * u.dimension_of(f_b)
+    """
 
 
 @jax.tree_util.register_static
@@ -26,20 +48,25 @@ class DimensionAxis(Coordinate):
 
     The physical dimension label can be retrieved by calling
     :func:`unxt.dimension_of` on a :class:`coordax.Field` that uses this
-    coordinate.  Note that standard arithmetic operators (``+``, ``-``,
-    ``*``, ``/``, ``**``) on :class:`coordax.Field` objects work as expected.
+    coordinate.
 
-    .. rubric:: Arithmetic limitations
+    .. rubric:: Arithmetic restrictions
 
     Addition and subtraction are dimension-safe by construction: coordax
     enforces that operands sharing the same axis name carry identical
     coordinate objects, so adding two fields whose ``DimensionAxis`` instances
     carry different physical dimensions raises a ``ValueError`` from coordax.
 
-    Multiplication, division, and powers work on the values but **do not
-    update the dimension label** on the resulting ``DimensionAxis``.  The
-    result field retains the coordinate objects of the first operand unchanged.
-    To compute the resulting dimension explicitly::
+    **Multiplication and division** raise :class:`DimensionOperationError` when
+    the *other* operand is a :class:`~coordax.Field` with a ``DimensionAxis``
+    (because the resulting physical dimension cannot be automatically
+    propagated).  Scaling by a plain number or a field *without* a
+    ``DimensionAxis`` is allowed.
+
+    **Powers** always raise :class:`DimensionOperationError` when the base
+    field contains a ``DimensionAxis``.
+
+    To compute the result dimension explicitly::
 
         dim_result = u.dimension_of(f_a) * u.dimension_of(f_b)
 
