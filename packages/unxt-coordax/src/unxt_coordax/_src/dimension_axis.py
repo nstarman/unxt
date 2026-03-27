@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__all__ = ["DimensionAxis", "DimensionOperationError"]
+__all__ = ["DimensionAxis"]
 
 import dataclasses
 from typing import Any
@@ -13,28 +13,6 @@ from coordax import Coordinate
 from coordax.coordinate_systems import Scalar
 
 from unxt.dims import dimension
-
-
-class DimensionOperationError(TypeError):
-    """Raised when a dimension-unsafe arithmetic operation is attempted.
-
-    Multiplication and division on :class:`coordax.Field` objects are not
-    automatically tracked when either operand carries a
-    :class:`DimensionAxis`.  Specifically:
-
-    * **Multiply / divide**: raises if the *other* operand is a
-      :class:`coordax.Field` that contains a :class:`DimensionAxis`.
-      Scaling by a plain number or a field *without* a ``DimensionAxis``
-      is allowed.
-    * **Power**: always raises when the base field contains a
-      :class:`DimensionAxis`, because the resulting physical dimension
-      cannot be recorded automatically.
-
-    To work with the resulting dimension manually, compute it explicitly::
-
-        import unxt as u
-        dim_result = u.dimension_of(f_a) * u.dimension_of(f_b)
-    """
 
 
 @jax.tree_util.register_static
@@ -50,25 +28,44 @@ class DimensionAxis(Coordinate):
     :func:`unxt.dimension_of` on a :class:`coordax.Field` that uses this
     coordinate.
 
-    .. rubric:: Arithmetic restrictions
+    .. rubric:: Arithmetic behaviour
 
     Addition and subtraction are dimension-safe by construction: coordax
     enforces that operands sharing the same axis name carry identical
     coordinate objects, so adding two fields whose ``DimensionAxis`` instances
     carry different physical dimensions raises a ``ValueError`` from coordax.
 
-    **Multiplication and division** raise :class:`DimensionOperationError` when
-    the *other* operand is a :class:`~coordax.Field` with a ``DimensionAxis``
-    (because the resulting physical dimension cannot be automatically
-    propagated).  Scaling by a plain number or a field *without* a
-    ``DimensionAxis`` is allowed.
+    **Multiplication, division, and powers work on the field values but do not
+    propagate the physical dimension label.**  The result field retains the
+    coordinate objects of the *left-hand* operand unchanged.  This means, for
+    example:
 
-    **Powers** always raise :class:`DimensionOperationError` when the base
-    field contains a ``DimensionAxis``.
+    * Multiplying a *length* field by another *length* field produces a field
+      whose axis is still labelled *length*, even though the values now
+      represent *area*.
+    * Squaring a *length* field leaves the axis label as *length* rather than
+      updating it to *length²*.
 
-    To compute the result dimension explicitly::
+    This is a known limitation of the current coordax arithmetic model, which
+    does not yet provide a hook for coordinates to mediate binary operations.
+    The coordax maintainers are being approached to add first-class support for
+    propagating coordinate metadata through multiplication, division, and power
+    operations.
 
+    In the meantime, if you need the correct result dimension you must compute
+    it explicitly from the operand dimensions::
+
+        import unxt as u
+
+        # multiply/divide
         dim_result = u.dimension_of(f_a) * u.dimension_of(f_b)
+        dim_result = u.dimension_of(f_a) / u.dimension_of(f_b)
+
+        # power
+        dim_result = u.dimension_of(f) ** n
+
+    and create a new :class:`DimensionAxis` with that dimension before
+    attaching it to the result field.
 
     Fields backed by plain NumPy arrays, JAX arrays **or** :class:`unxt.Quantity`
     arrays can all be used with this coordinate type.

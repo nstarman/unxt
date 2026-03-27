@@ -6,7 +6,7 @@ Tests cover:
 - unxt.dimension_of dispatches for DimensionAxis and coordax.Field
 - Standard arithmetic operators on fields (add/sub/mul/div/pow)
 - Dimension mismatch enforcement via coordax coordinate identity check
-- DimensionOperationError for mul/div with dimensioned fields and all powers
+- Dimension label non-propagation for mul/div/pow (documented limitation)
 - JAX JIT compatibility
 """
 
@@ -23,7 +23,7 @@ import unxt as u
 import unxt_coordax as ucx
 from unxt.dims import dimension_of
 
-from unxt_coordax import DimensionAxis, DimensionOperationError
+from unxt_coordax import DimensionAxis
 
 
 # ---------------------------------------------------------------------------
@@ -164,12 +164,12 @@ class TestDimensionOf:
 #   unequal, so adding/subtracting fields with incompatible dimensions raises
 #   ValueError from coordax.
 #
-# Multiply / divide:
-#   Raises DimensionOperationError if the OTHER field has a DimensionAxis.
-#   Scaling by a plain number or a field without DimensionAxis is allowed.
-#
-# Power:
-#   Always raises DimensionOperationError when self has a DimensionAxis.
+# Multiply / divide / power:
+#   Operations succeed on the field *values*, but the DimensionAxis label on
+#   the result is NOT updated (it retains the coordinate of the left operand).
+#   This is a known limitation of the current coordax arithmetic model.
+#   See the DimensionAxis docstring for details and how to compute the correct
+#   result dimension manually.
 
 
 class TestAddSubtract:
@@ -216,136 +216,111 @@ class TestAddSubtract:
         with pytest.raises(ValueError, match="Coordinates"):
             f1 - f2
 
-    def test_add_jit(self, axis_length: DimensionAxis) -> None:
-        f = cx.field(jnp.ones(5), axis_length)
-
-        @jax.jit
-        def add_twice(x: cx.Field) -> cx.Field:
-            return x + x
-
-        result = add_twice(f)
-        np.testing.assert_allclose(np.asarray(result.data), np.full(5, 2.0))
-
 
 class TestMultiplyDivide:
-    """Multiply / divide error when other field has a DimensionAxis."""
+    """Multiply/divide operate on values; dimension label is NOT propagated.
 
-    def test_mul_dimensioned_field_raises(self, axis_length: DimensionAxis) -> None:
+    This is a documented limitation of the current coordax arithmetic model.
+    The result field retains the coordinate of the left-hand operand.
+    """
+
+    def test_mul_same_axis_values(self, axis_length: DimensionAxis) -> None:
+        f = cx.field(np.array([2.0, 3.0, 4.0, 5.0, 6.0]), axis_length)
+        result = f * f
+        np.testing.assert_allclose(
+            np.asarray(result.data), np.array([4.0, 9.0, 16.0, 25.0, 36.0])
+        )
+
+    def test_mul_retains_left_coord(self, axis_length: DimensionAxis) -> None:
+        # The result retains the coordinate of the left operand unchanged.
+        # NOTE: the dimension label is NOT updated to reflect area.
         f = cx.field(np.ones(5), axis_length)
-        with pytest.raises(DimensionOperationError):
-            f * f
+        result = f * f
+        assert result.axes["x"] == axis_length
 
-    def test_mul_different_dimension_fields_raises(
-        self,
-        axis_length: DimensionAxis,
-        axis_time: DimensionAxis,
-    ) -> None:
-        # Both fields have DimensionAxis (different dim names) → still error.
-        f_len = cx.field(np.ones(5), axis_length)
-        t_ax = DimensionAxis("t", 5, "time")
-        f_time = cx.field(np.ones(5), t_ax)
-        with pytest.raises(DimensionOperationError):
-            f_len * f_time
-
-    def test_mul_by_scalar_ok(self, axis_length: DimensionAxis) -> None:
-        # Scaling by a plain number is allowed.
+    def test_mul_by_scalar(self, axis_length: DimensionAxis) -> None:
         f = cx.field(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), axis_length)
         result = f * 2.0
         np.testing.assert_allclose(
             np.asarray(result.data), np.array([2.0, 4.0, 6.0, 8.0, 10.0])
         )
 
-    def test_mul_by_plain_field_ok(self, axis_length: DimensionAxis) -> None:
-        # Scaling by a field with NO DimensionAxis is allowed.
-        f = cx.field(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), axis_length)
-        scale = cx.field(np.full(5, 2.0), cx.SizedAxis("x", 5))
-        # Different coord type on same dim name → coordax raises ValueError.
-        # Use a different axis name for plain scaling.
-        scale2 = 2.0
-        result = f * scale2
-        np.testing.assert_allclose(
-            np.asarray(result.data), np.array([2.0, 4.0, 6.0, 8.0, 10.0])
-        )
-
-    def test_scalar_times_dimensioned_field_ok(self, axis_length: DimensionAxis) -> None:
-        # 2.0 * f: Python calls (2.0).__mul__(f) → NotImplemented,
-        # then f.__rmul__(2.0).  The "other" (2.0) has no DimensionAxis → OK.
+    def test_scalar_times_field(self, axis_length: DimensionAxis) -> None:
         f = cx.field(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), axis_length)
         result = 2.0 * f
         np.testing.assert_allclose(
             np.asarray(result.data), np.array([2.0, 4.0, 6.0, 8.0, 10.0])
         )
 
-    def test_div_dimensioned_field_raises(self, axis_length: DimensionAxis) -> None:
-        f = cx.field(np.ones(5), axis_length)
-        with pytest.raises(DimensionOperationError):
-            f / f
+    def test_div_same_axis_values_numpy(self, axis_length: DimensionAxis) -> None:
+        f = cx.field(np.array([4.0, 9.0, 16.0, 25.0, 36.0]), axis_length)
+        divisor = cx.field(np.array([2.0, 3.0, 4.0, 5.0, 6.0]), axis_length)
+        result = f / divisor
+        np.testing.assert_allclose(
+            np.asarray(result.data), np.array([2.0, 3.0, 4.0, 5.0, 6.0])
+        )
 
-    def test_div_different_dimension_fields_raises(self, axis_length: DimensionAxis) -> None:
-        f_len = cx.field(np.ones(5), axis_length)
-        t_ax = DimensionAxis("t", 5, "time")
-        f_time = cx.field(np.ones(5), t_ax)
-        with pytest.raises(DimensionOperationError):
-            f_len / f_time
+    def test_div_same_axis_values_jax(self, axis_length: DimensionAxis) -> None:
+        f = cx.field(jnp.array([4.0, 9.0, 16.0, 25.0, 36.0]), axis_length)
+        divisor = cx.field(jnp.array([2.0, 3.0, 4.0, 5.0, 6.0]), axis_length)
+        result = f / divisor
+        np.testing.assert_allclose(
+            np.asarray(result.data), np.array([2.0, 3.0, 4.0, 5.0, 6.0])
+        )
 
-    def test_div_by_scalar_ok(self, axis_length: DimensionAxis) -> None:
+    def test_div_by_scalar(self, axis_length: DimensionAxis) -> None:
         f = cx.field(np.array([2.0, 4.0, 6.0, 8.0, 10.0]), axis_length)
         result = f / 2.0
         np.testing.assert_allclose(
             np.asarray(result.data), np.array([1.0, 2.0, 3.0, 4.0, 5.0])
         )
 
-    def test_rtruediv_dimensioned_field_raises(self, axis_length: DimensionAxis) -> None:
-        # 1.0 / f_length → f_length.__rtruediv__(1.0) → self has DimensionAxis → error.
-        f = cx.field(np.ones(5), axis_length)
-        with pytest.raises(DimensionOperationError):
-            _ = 1.0 / f
-
-    def test_mul_quantity_by_scalar_ok(self, axis_length: DimensionAxis) -> None:
+    def test_mul_quantity_values(self, axis_length: DimensionAxis) -> None:
         data = u.Quantity(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), "m")
         f = cx.field(data, axis_length)
-        result = f * 2.0
+        result = f * f
         assert isinstance(result, cx.Field)
 
-    def test_div_quantity_by_scalar_ok(self, axis_length: DimensionAxis) -> None:
+    def test_div_quantity_values(self, axis_length: DimensionAxis) -> None:
         data = u.Quantity(np.array([2.0, 4.0, 6.0, 8.0, 10.0]), "m")
         f = cx.field(data, axis_length)
-        result = f / 2.0
+        result = f / f
         assert isinstance(result, cx.Field)
 
 
 class TestPower:
-    """Power always errors when self has a DimensionAxis."""
+    """Power operates on values; dimension label is NOT propagated.
 
-    def test_pow_int_raises(self, axis_length: DimensionAxis) -> None:
-        f = cx.field(np.ones(5), axis_length)
-        with pytest.raises(DimensionOperationError):
-            f**2
+    This is a documented limitation of the current coordax arithmetic model.
+    The result field retains the coordinate of the base operand unchanged.
+    """
 
-    def test_pow_float_raises(self, axis_length: DimensionAxis) -> None:
-        f = cx.field(np.ones(5), axis_length)
-        with pytest.raises(DimensionOperationError):
-            f**0.5
-
-    def test_pow_quantity_values_raises(self, axis_length: DimensionAxis) -> None:
-        data = u.Quantity(np.ones(5), "m")
-        f = cx.field(data, axis_length)
-        with pytest.raises(DimensionOperationError):
-            f**2
-
-    def test_pow_plain_field_no_dimension_axis_ok(self) -> None:
-        # Fields without DimensionAxis can still be raised to a power.
-        plain = cx.SizedAxis("x", 5)
-        f = cx.field(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), plain)
+    def test_pow_int(self, axis_length: DimensionAxis) -> None:
+        f = cx.field(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), axis_length)
         result = f**2
         np.testing.assert_allclose(
             np.asarray(result.data), np.array([1.0, 4.0, 9.0, 16.0, 25.0])
         )
 
-    def test_pow_jax_raises(self, axis_length: DimensionAxis) -> None:
-        f = cx.field(jnp.ones(5), axis_length)
-        with pytest.raises(DimensionOperationError):
-            f**2
+    def test_pow_retains_coord(self, axis_length: DimensionAxis) -> None:
+        # NOTE: the dimension label is NOT updated (result axis is still
+        # "length", not "length²").  This is the documented limitation.
+        f = cx.field(np.ones(5), axis_length)
+        result = f**2
+        assert result.axes["x"] == axis_length
+
+    def test_pow_quantity_values(self, axis_length: DimensionAxis) -> None:
+        data = u.Quantity(np.array([1.0, 2.0, 3.0, 4.0, 5.0]), "m")
+        f = cx.field(data, axis_length)
+        result = f**2
+        assert isinstance(result, cx.Field)
+
+    def test_pow_jax(self, axis_length: DimensionAxis) -> None:
+        f = cx.field(jnp.array([1.0, 2.0, 3.0, 4.0, 5.0]), axis_length)
+        result = f**2
+        np.testing.assert_allclose(
+            np.asarray(result.data), np.array([1.0, 4.0, 9.0, 16.0, 25.0])
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -363,18 +338,20 @@ class TestJaxJIT:
         result = add_twice(f)
         np.testing.assert_allclose(np.asarray(result.data), np.full(5, 2.0))
 
-    def test_mul_jit_raises(self, axis_length: DimensionAxis) -> None:
-        # DimensionOperationError is raised at trace time (Python level).
+    def test_mul_jit(self, axis_length: DimensionAxis) -> None:
         f = cx.field(jnp.array([1.0, 2.0, 3.0, 4.0, 5.0]), axis_length)
 
         @jax.jit
         def square(x: cx.Field) -> cx.Field:
             return x * x
 
-        with pytest.raises(DimensionOperationError):
-            square(f)
+        result = square(f)
+        np.testing.assert_allclose(
+            np.asarray(result.data),
+            np.array([1.0, 4.0, 9.0, 16.0, 25.0]),
+        )
 
-    def test_mul_by_scalar_jit_ok(self, axis_length: DimensionAxis) -> None:
+    def test_mul_by_scalar_jit(self, axis_length: DimensionAxis) -> None:
         f = cx.field(jnp.array([1.0, 2.0, 3.0, 4.0, 5.0]), axis_length)
 
         @jax.jit
@@ -386,5 +363,4 @@ class TestJaxJIT:
             np.asarray(result.data),
             np.array([2.0, 4.0, 6.0, 8.0, 10.0]),
         )
-
 

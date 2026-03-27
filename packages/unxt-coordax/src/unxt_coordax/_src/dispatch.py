@@ -1,26 +1,46 @@
-"""Plum dispatches extending :func:`unxt.dimension_of` for coordax types, and
-arithmetic restrictions for :class:`~coordax.Field` objects backed by
-:class:`~unxt_coordax.DimensionAxis` coordinates.
+"""Plum dispatches extending :func:`unxt.dimension_of` for coordax types.
 
 Importing this module (which happens automatically when ``unxt_coordax`` is
-imported) does two things:
+imported) registers two new overloads of :func:`unxt.dimension_of`:
 
-1. Registers two new overloads of :func:`unxt.dimension_of`:
+* ``dimension_of(DimensionAxis)`` – returns the physical dimension stored on the
+  coordinate itself.
+* ``dimension_of(coordax.Field)`` – returns the physical dimension of the
+  **first** :class:`~unxt_coordax.DimensionAxis` found among the field's axes,
+  or ``None`` if no such axis is present.
 
-   * ``dimension_of(DimensionAxis)`` – returns the physical dimension stored on
-     the coordinate itself.
-   * ``dimension_of(coordax.Field)`` – returns the physical dimension of the
-     **first** :class:`~unxt_coordax.DimensionAxis` found among the field's
-     axes, or ``None`` if no such axis is present.
+.. note:: Arithmetic behaviour
 
-2. Patches :class:`coordax.Field` arithmetic to enforce dimension safety:
+   Standard operators (``+``, ``-``, ``*``, ``/``, ``**``) work directly on
+   :class:`coordax.Field` objects.  Addition and subtraction are
+   dimension-safe: coordax enforces that operands sharing the same axis name
+   must carry **identical** coordinate objects, so adding two fields whose
+   ``DimensionAxis`` carry different physical dimensions raises a
+   ``ValueError`` from coordax.
 
-   * **Multiply / divide** raise :class:`~unxt_coordax.DimensionOperationError`
-     when the *other* operand is a :class:`~coordax.Field` that contains a
-     :class:`~unxt_coordax.DimensionAxis`.  Scaling by a plain number or a
-     field *without* a ``DimensionAxis`` is allowed.
-   * **Power** always raises :class:`~unxt_coordax.DimensionOperationError`
-     when the base field contains a :class:`~unxt_coordax.DimensionAxis`.
+   **Multiplication, division, and powers do not update the dimension label**
+   on the resulting :class:`~unxt_coordax.DimensionAxis`.  The result field
+   retains the coordinate objects of the first operand unchanged.  This means
+   that, for example, squaring a *length* field yields a field whose axis is
+   still labelled *length* even though the values are now an *area*, and
+   multiplying *length* by *time* silently produces a field still labelled
+   *length*.  If you need the result dimension, compute it explicitly::
+
+       import unxt as u
+
+       dim_result = u.dimension_of(f_a) * u.dimension_of(f_b)
+
+   and create a new :class:`~unxt_coordax.DimensionAxis` with that dimension.
+
+   .. admonition:: Future improvement
+
+      This limitation is a consequence of the current coordax arithmetic
+      model, which does not provide a hook for coordinate objects to transform
+      their metadata during binary operations.  The coordax maintainers are
+      being approached to add first-class support for propagating coordinate
+      metadata through multiplication, division, and power operations.  Once
+      that support lands, ``DimensionAxis`` will be updated to propagate
+      dimensions automatically.
 """
 
 from __future__ import annotations
@@ -31,7 +51,7 @@ from coordax import Field
 from plum import dispatch
 
 from unxt.dims import AbstractDimension, dimension_of
-from unxt_coordax._src.dimension_axis import DimensionAxis, DimensionOperationError
+from unxt_coordax._src.dimension_axis import DimensionAxis
 
 
 # ---------------------------------------------------------------------------
@@ -105,75 +125,4 @@ def dimension_of(field: Field, /) -> AbstractDimension | None:
         if isinstance(coord, DimensionAxis):
             return coord.dimension
     return None
-
-
-# ---------------------------------------------------------------------------
-# Field arithmetic restrictions
-#
-# coordax.Field arithmetic does not propagate DimensionAxis dimension labels.
-# We patch Field.__mul__, __truediv__, __pow__, and __rtruediv__ to raise
-# DimensionOperationError when the operation would silently lose dimension info.
-
-
-def _has_dimension_axis(obj: object) -> bool:
-    """Return True if *obj* is a Field that contains at least one DimensionAxis."""
-    return isinstance(obj, Field) and any(
-        isinstance(c, DimensionAxis) for c in obj.axes.values()
-    )
-
-
-_ORIG_MUL = Field.__mul__
-_ORIG_TRUEDIV = Field.__truediv__
-_ORIG_POW = Field.__pow__
-_ORIG_RTRUEDIV = Field.__rtruediv__
-
-
-def _checked_mul(self: Field, other: object) -> Field:
-    if _has_dimension_axis(other):
-        raise DimensionOperationError(
-            "Cannot multiply a field by another field that has physical "
-            "dimensions: the resulting dimension cannot be automatically "
-            "propagated.  Compute the result dimension explicitly with "
-            "u.dimension_of(f_a) * u.dimension_of(f_b)."
-        )
-    return _ORIG_MUL(self, other)
-
-
-def _checked_truediv(self: Field, other: object) -> Field:
-    if _has_dimension_axis(other):
-        raise DimensionOperationError(
-            "Cannot divide a field by another field that has physical "
-            "dimensions: the resulting dimension cannot be automatically "
-            "propagated.  Compute the result dimension explicitly with "
-            "u.dimension_of(f_a) / u.dimension_of(f_b)."
-        )
-    return _ORIG_TRUEDIV(self, other)
-
-
-def _checked_pow(self: Field, other: object) -> Field:
-    if _has_dimension_axis(self):
-        raise DimensionOperationError(
-            "Cannot raise a field with physical dimensions to a power: "
-            "the resulting dimension cannot be automatically propagated.  "
-            "Compute the result dimension explicitly with "
-            "u.dimension_of(f) ** n."
-        )
-    return _ORIG_POW(self, other)
-
-
-def _checked_rtruediv(self: Field, other: object) -> Field:
-    # self.__rtruediv__(other) handles `other / self`.
-    # If self has a DimensionAxis the result dimension (1/dim) is not tracked.
-    if _has_dimension_axis(self):
-        raise DimensionOperationError(
-            "Cannot divide by a field that has physical dimensions: "
-            "the resulting dimension cannot be automatically propagated."
-        )
-    return _ORIG_RTRUEDIV(self, other)
-
-
-Field.__mul__ = _checked_mul
-Field.__truediv__ = _checked_truediv
-Field.__pow__ = _checked_pow
-Field.__rtruediv__ = _checked_rtruediv
 
