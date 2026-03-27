@@ -1,0 +1,60 @@
+[project]
+  name = "unxt-coordax"
+  dynamic = ["version"]
+  description = "Interoperability between unxt and coordax"
+  readme = "README.md"
+  requires-python = ">=3.11"
+  authors = [
+    { name = "GalacticDynamics", email = "nstarman@users.noreply.github.com" },
+  ]
+  classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python",
+    "Topic :: Scientific/Engineering",
+    "Typing :: Typed",
+  ]
+  license.file = "LICENSE"
+  dependencies = [
+    "astropy>=7.0.0",
+    "coordax>=0.2.7",
+    "unxt>=0.1",
+  ]
+
+  [project.optional-dependencies]
+    cpu  = ["jax[cpu]>=0.5.3"]
+    test = [
+      "pytest>=8.3",
+      "pytest-arraydiff",
+    ]
+
+  [project.urls]
+    "Bug Tracker" = "https://github.com/GalacticDynamics/unxt/issues"
+    Homepage      = "https://github.com/GalacticDynamics/unxt"
+
+[build-system]
+  requires      = ["hatch-vcs", "hatchling"]
+  build-backend = "hatchling.build"
+
+[tool.hatch.version]
+  source = "vcs"
+  raw-options = { root = "../.." }
+
+[tool.hatch.build.targets.wheel]
+  packages = ["src/unxt_coordax"]
+
+[tool.pytest.ini_options]
+  addopts = ["--showlocals", "--strict-config", "--strict-markers", "-ra"]
+  filterwarnings = ["error"]
+  log_cli_level = "INFO"
+  minversion = "8.3"
+  testpaths = ["tests/"]
+  xfail_strict = true
